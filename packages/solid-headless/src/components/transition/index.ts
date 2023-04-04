@@ -27,8 +27,11 @@ interface TransitionRootContext {
 }
 
 interface ChildTransitionContext {
-  set: Set<HTMLElement>;
-  dirty: VoidFunction;
+  // set: Set<HTMLElement>;
+  set: {
+    add: (el: HTMLElement) => void;
+    delete: (el: HTMLElement) => void;
+  };
   done: Accessor<boolean>;
 }
 
@@ -45,23 +48,29 @@ function useTransitionRootContext(componentName: string): TransitionRootContext 
 }
 
 function initChildContextValue(): ChildTransitionContext {
+  // Set of currently transitioning TransitionChilds nested within a TransitionChild
   const transitionSet = new Set<HTMLElement>();
   const [done, setDone] = createSignal(true);
 
   const dirty = () => setDone(transitionSet.size === 0);
 
   return {
-    set: transitionSet,
-    dirty,
+    // Reactive set
+    set: {
+      add(el) {
+        transitionSet.add(el);
+        dirty();
+      },
+      delete(el) {
+        transitionSet.delete(el);
+        dirty();
+      },
+    },
     done,
   };
 }
 
-function makeChildWithScope(
-  ctx: ChildTransitionContext,
-  child: () => JSX.Element,
-): JSX.Element {
-
+function makeChildWithScope(ctx: ChildTransitionContext, child: () => JSX.Element): JSX.Element {
   return createComponent(ChildTransitionContext.Provider, {
     value: ctx,
     children: child,
@@ -74,11 +83,14 @@ function useChildContext(): ChildTransitionContext {
   if (context) {
     return context;
   } else {
+    // return empty context value
     return {
-      set: new Set(),
-      dirty: () => {},
+      set: {
+        add: () => {},
+        delete: () => {},
+      },
       done: () => true,
-    }
+    };
   }
 }
 
@@ -99,31 +111,36 @@ interface TransitionBaseChildProps {
 }
 
 function getClassList(classes?: string): string[] {
-  return classes ? classes.split(' ') : [];
+  return classes ? classes.split(" ") : [];
 }
 
 function addClassList(ref: HTMLElement, classes: string[]) {
-  const filtered = classes.filter((value) => value);
+  const filtered = classes.filter(value => value);
   if (filtered.length) {
     ref.classList.add(...filtered);
   }
 }
 function removeClassList(ref: HTMLElement, classes: string[]) {
-  const filtered = classes.filter((value) => value);
+  const filtered = classes.filter(value => value);
   if (filtered.length) {
     ref.classList.remove(...filtered);
   }
 }
 
-export type TransitionChildProps<T extends ValidConstructor = 'div'> =
-  HeadlessPropsWithRef<T, TransitionBaseChildProps>;
+function nextFrame(...args: Parameters<typeof requestAnimationFrame>) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(...args);
+  });
+}
 
-export function TransitionChild<T extends ValidConstructor = 'div'>(
-  props: TransitionChildProps<T>,
-): JSX.Element {
-  const values = useTransitionRootContext('TransitionChild');
-  const pending = useChildContext();
-  const childCtx = initChildContextValue();
+export type TransitionChildProps<T extends ValidConstructor = "div"> = HeadlessPropsWithRef<T, TransitionBaseChildProps>;
+
+export function TransitionChild<T extends ValidConstructor = "div">(props: TransitionChildProps<T>): JSX.Element {
+  const values = useTransitionRootContext("TransitionChild");
+  // Transitions pending on parent
+  const pendingParent = useChildContext();
+  // Transitions pending underneath element
+  const pendingChilds = initChildContextValue();
   let isTransitioning = false;
 
   const [visible, setVisible] = createSignal(values.show);
@@ -149,21 +166,19 @@ export function TransitionChild<T extends ValidConstructor = 'div'>(
         props.afterEnter?.();
         isTransitioning = false;
 
-        pending.set.delete(element);
-        pending.dirty();
-        element.removeEventListener('transitionend', endTransition);
-        element.removeEventListener('animationend', endTransition);
+        pendingParent.set.delete(element);
+        element.removeEventListener("transitionend", endTransition);
+        element.removeEventListener("animationend", endTransition);
       };
 
       props.beforeEnter?.();
       addClassList(element, enter);
       addClassList(element, enterFrom);
 
-      pending.set.add(element);
-      pending.dirty();
+      pendingParent.set.add(element);
 
       if (enterTo.length > 0) {
-        requestAnimationFrame(() => {
+        nextFrame(() => {
           removeClassList(element, enterFrom);
           addClassList(element, enterTo);
 
@@ -190,17 +205,15 @@ export function TransitionChild<T extends ValidConstructor = 'div'>(
         removeClassList(element, leaveTo);
         setShouldHide(true);
 
-        pending.set.delete(element);
-        pending.dirty();
+        pendingParent.set.delete(element);
         element.removeEventListener("transitionend", endTransition);
         element.removeEventListener("animationend", endTransition);
       };
 
-      pending.set.add(element);
-      pending.dirty();
+      pendingParent.set.add(element);
 
       if (leaveTo.length > 0) {
-        requestAnimationFrame(() => {
+        nextFrame(() => {
           removeClassList(element, leaveFrom);
           addClassList(element, leaveTo);
         });
@@ -227,7 +240,7 @@ export function TransitionChild<T extends ValidConstructor = 'div'>(
   });
 
   createEffect(() => {
-    if (shouldHide() && childCtx.done()) {
+    if (shouldHide() && pendingChilds.done()) {
       setShouldHide(false);
 
       const internalRef = ref();
@@ -241,28 +254,27 @@ export function TransitionChild<T extends ValidConstructor = 'div'>(
     }
   });
 
-  return makeChildWithScope(
-    childCtx,
-    () => createUnmountable(props, visible, () =>
+  return makeChildWithScope(pendingChilds, () =>
+    createUnmountable(props, visible, () =>
       createDynamic(
-        () => props.as ?? ('div' as T),
+        () => props.as ?? ("div" as T),
         mergeProps(
           omitProps(props, [
-            'as',
-            'enter',
-            'enterFrom',
-            'enterTo',
-            'leave',
-            'leaveFrom',
-            'leaveTo',
-            'unmount',
-            'afterEnter',
-            'afterLeave',
-            'appear',
-            'beforeEnter',
-            'beforeLeave',
-            'entered',
-            'ref',
+            "as",
+            "enter",
+            "enterFrom",
+            "enterTo",
+            "leave",
+            "leaveFrom",
+            "leaveTo",
+            "unmount",
+            "afterEnter",
+            "afterLeave",
+            "appear",
+            "beforeEnter",
+            "beforeLeave",
+            "entered",
+            "ref",
           ]),
           {
             ref: createRef(props, e => {

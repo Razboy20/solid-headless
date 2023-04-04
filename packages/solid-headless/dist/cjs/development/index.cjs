@@ -7202,8 +7202,17 @@ function initChildContextValue() {
   const [done, setDone] = (0, import_solid_js155.createSignal)(true);
   const dirty = () => setDone(transitionSet.size === 0);
   return {
-    set: transitionSet,
-    dirty,
+    // Reactive set
+    set: {
+      add(el) {
+        transitionSet.add(el);
+        dirty();
+      },
+      delete(el) {
+        transitionSet.delete(el);
+        dirty();
+      }
+    },
     done
   };
 }
@@ -7219,8 +7228,11 @@ function useChildContext() {
     return context;
   } else {
     return {
-      set: /* @__PURE__ */ new Set(),
-      dirty: () => {
+      set: {
+        add: () => {
+        },
+        delete: () => {
+        }
       },
       done: () => true
     };
@@ -7241,10 +7253,15 @@ function removeClassList(ref, classes) {
     ref.classList.remove(...filtered);
   }
 }
+function nextFrame(...args) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(...args);
+  });
+}
 function TransitionChild(props) {
   const values = useTransitionRootContext("TransitionChild");
-  const pending = useChildContext();
-  const childCtx = initChildContextValue();
+  const pendingParent = useChildContext();
+  const pendingChilds = initChildContextValue();
   let isTransitioning = false;
   const [visible, setVisible] = (0, import_solid_js155.createSignal)(values.show);
   const [shouldHide, setShouldHide] = (0, import_solid_js155.createSignal)(false);
@@ -7268,18 +7285,16 @@ function TransitionChild(props) {
         addClassList(element, entered);
         (_a2 = props.afterEnter) == null ? void 0 : _a2.call(props);
         isTransitioning = false;
-        pending.set.delete(element);
-        pending.dirty();
+        pendingParent.set.delete(element);
         element.removeEventListener("transitionend", endTransition);
         element.removeEventListener("animationend", endTransition);
       };
       (_a = props.beforeEnter) == null ? void 0 : _a.call(props);
       addClassList(element, enter);
       addClassList(element, enterFrom);
-      pending.set.add(element);
-      pending.dirty();
+      pendingParent.set.add(element);
       if (enterTo.length > 0) {
-        requestAnimationFrame(() => {
+        nextFrame(() => {
           removeClassList(element, enterFrom);
           addClassList(element, enterTo);
           element.addEventListener("transitionend", endTransition);
@@ -7303,15 +7318,13 @@ function TransitionChild(props) {
         removeClassList(element, leave);
         removeClassList(element, leaveTo);
         setShouldHide(true);
-        pending.set.delete(element);
-        pending.dirty();
+        pendingParent.set.delete(element);
         element.removeEventListener("transitionend", endTransition);
         element.removeEventListener("animationend", endTransition);
       };
-      pending.set.add(element);
-      pending.dirty();
+      pendingParent.set.add(element);
       if (leaveTo.length > 0) {
-        requestAnimationFrame(() => {
+        nextFrame(() => {
           removeClassList(element, leaveFrom);
           addClassList(element, leaveTo);
         });
@@ -7334,7 +7347,7 @@ function TransitionChild(props) {
   });
   (0, import_solid_js155.createEffect)(() => {
     var _a;
-    if (shouldHide() && childCtx.done()) {
+    if (shouldHide() && pendingChilds.done()) {
       setShouldHide(false);
       const internalRef = ref();
       if (internalRef instanceof HTMLElement) {
@@ -7345,7 +7358,7 @@ function TransitionChild(props) {
     }
   });
   return makeChildWithScope(
-    childCtx,
+    pendingChilds,
     () => createUnmountable(
       props,
       visible,
